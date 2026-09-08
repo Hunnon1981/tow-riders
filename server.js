@@ -9,6 +9,7 @@ const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const sgMail = require('@sendgrid/mail');
 const axios = require('axios');
+const driverApi = require('./driver-api');
 
 // Initialize
 const app = express();
@@ -51,8 +52,23 @@ app.post('/api/stripe/webhook', express.raw({type: 'application/json'}), async (
       const session = event.data.object;
       console.log('✅ Payment successful:', session);
       
-      // Send confirmation email
-      await sendPaymentConfirmationEmail(session);
+      try {
+        // Send confirmation email
+        await sendPaymentConfirmationEmail(session);
+        
+        // Create job from checkout
+        if (driverApi && typeof driverApi.createJobFromCheckout === 'function') {
+          const jobResult = await driverApi.createJobFromCheckout(session);
+          if (jobResult.success) {
+            console.log('✅ Driver job created from checkout:', jobResult.jobId);
+          } else {
+            console.error('⚠️  Job creation failed:', jobResult.error);
+          }
+        }
+      } catch (error) {
+        console.error('⚠️  Error processing checkout completion:', error.message);
+        // Still send 200 to Stripe to prevent retries
+      }
       break;
     
     case 'payment_intent.payment_failed':
@@ -70,6 +86,9 @@ app.post('/api/stripe/webhook', express.raw({type: 'application/json'}), async (
 // Parse JSON (for all other routes)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Driver API registration
+driverApi.register(app);
 
 // Logging
 app.use((req, res, next) => {
